@@ -1,0 +1,166 @@
+---
+title: "Personal Activity Data Analysis"
+author: "Anish Joy"
+date: "21 October 2017"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set
+```
+
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+## Data
+
+Data The training data for this project are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv The test data are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. 
+
+## Objective
+
+The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. 
+
+## Data Import and Exploration
+
+* Import the datasets
+
+```{r include=FALSE}
+#First of all import the datasets for training and testing and set as NA those 
+#values which are missing
+library(caret)
+library(rattle)
+data_main <- read.csv("C:/Users/Aparna Sathyan/Desktop/Coursera/Practical Machine Learning/Practical Machine Learning Project/pml-training.csv",na.strings=c("NA","#DIV/0!",""))
+testing<- read.csv("C:/Users/Aparna Sathyan/Desktop/Coursera/Practical Machine Learning/Practical Machine Learning Project/pml-testing.csv",na.strings=c("NA","#DIV/0!",""))
+```
+
+* Split the training datasets into training and validation datasets
+
+```{r}
+inTrain = createDataPartition(data_main$classe, p = .7,list=F)
+training<-data_main[inTrain,]
+validation<-data_main[-inTrain,]
+```
+
+* Now perform exploratory analysis on the data to understand the underlying variables. The results are in Appendix. You can see that the first 7 variables are identifier variables and there are quite a lot of missing values which should be treated
+
+## Data Preparation
+
+* Remove variables 1-7 from the data
+
+```{r include=FALSE}
+training<-subset(training,select=c(-1:-7))
+validation<-subset(validation,select=c(-1:-7))
+testing<-subset(testing,select=c(-1,-7))
+```
+
+* Remove variables which have missing values >=90% from the data. The 90% mark is quite subjective and this can be altered if required.
+
+```{r include=FALSE}
+#Create a function to calculate the fill_Rates of variables
+fill_rate<-function (data){
+  sum(is.na(data))/length(data)
+}
+#Check the fill rates of all the variables in the training data
+fill_rate_training<-apply(training,2,fill_rate)
+#Remove the variables having missing rate >=90%
+training1<-training[,fill_rate_training<.9]
+```
+
+* Remove variables with near zero variance from the data
+
+```{r include=FALSE}
+#Remove the near zero variance variables
+nzv <- nearZeroVar(training1, saveMetrics=TRUE)
+training2 <- training1[,nzv$nzv==FALSE]
+#Create testing a validation datasets with variables from Training
+testing1<-testing[,names(testing) %in% names(training2)]
+validation1<-validation[,names(validation) %in% names(training2)]
+```
+
+* Impute the missing values by using KNN 
+
+```{r include=FALSE}
+#Impute the NA values
+prep<-preProcess(training2[,-53],method="knnImpute")
+training3<-predict(prep,training2)
+testing2<-predict(prep,testing1)
+validation2<-predict(prep,validation1)
+```
+
+## Modelling 
+
+* First of all create a training control to give the number of cross validation to be done on the modelling sets.
+
+```{r}
+#Create Cross Validation Control
+train_control<- trainControl(method="cv", number=5)
+```
+
+* we will be creating models based on Trees, Random Forest, Gradient Boosting Method and LDA. At first let us create a model using Decision Trees
+
+```{r}
+#Create model using CART
+modFitTree<- train(classe~.,data=training3,method="rpart")
+fancyRpartPlot(modFitTree$finalMod,sub="Decision Tree on Training Data")
+```
+
+The Tree is able to create a simple relationship between the predictor and independent variables. This is a major advantage of Trees. The important variables shown in the tree are *roll_belt*, *pitch_forearm*,*magnet_dumbbell_y* and *roll_forearm*.
+
+* Next we model using the Random Forest, then GBM and then LDA
+
+```{r results="hide"}
+#Create model using Random Forest
+modFitRF<-train(classe~.,data=training3,method="rf")
+#Create model using GBM
+modFitGBM<-train(classe~.,data=training3,method="gbm")
+#Create model using LDA
+modFitLDA<-train(classe~.,data=training3,method="lda")
+```
+
+## Validation
+
+* Once the modelling is done create confusion matrices on the validation datasets to evaluate the models
+
+```{r include=FALSE}
+#Create Confusion Matrix for all the models
+predCART <- predict(modFitTree, newdata=validation2)
+cmCART <- confusionMatrix(predCART, validation2$classe)
+predGBM <- predict(modFitGBM, newdata=validation2)
+cmGBM <- confusionMatrix(predGBM, validation2$classe)
+predRF <- predict(modFitRF, newdata=validation2)
+cmRF <- confusionMatrix(predRF, validation2$classe)
+predLDA <- predict(modFitLDA, newdata=validation2)
+cmLDA<-confusionMatrix(predCART, validation2$classe)
+#Print Accuracy results
+AccuracyResults <- data.frame(
+  Model = c('CART', 'GBM', 'RF','LDA'),
+  Accuracy = rbind(cmCART$overall[1], cmGBM$overall[1], cmRF$overall[1],cmLDA$overall[1])
+)
+```
+
+Print the Accuracy results
+
+```{r echo=FALSE}
+print(AccuracyResults)
+```
+
+* Random Forests have the best accuracy,hence, use the Random Forest to score and predict the testing dataset
+
+```{r}
+#Random Forest has the best accuracy
+pred_fin_RF_test<-predict(modFitRF,newdata=testing2)
+```
+
+\pagebreak
+
+## Appendix
+
+* Summary of the Training Data
+
+```{r}
+#Exploratory Analysis on the data
+summary(data_main)
+```
